@@ -3,6 +3,7 @@ name: build and cache
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,18 +26,34 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
       - run: npm ci
       - run: npm run build
-      - name: preview key file state, value not printed
+      - name: preview key file state, no value ever printed
         run: |
           test -f .next/cache/.previewinfo
           echo "previewinfo present in .next/cache"
           echo "previewinfo sha256: $(sha256sum .next/cache/.previewinfo | cut -d' ' -f1)"
-          node -e 'const d=require("./.next/cache/.previewinfo");console.log("expireAt:",new Date(d.expireAt).toISOString());console.log("previewModeId length:",d.previewModeId.length);console.log("keys:",Object.keys(d).join(","))'
+          node --input-type=commonjs -e '
+            const fs = require("fs");
+            try {
+              const d = JSON.parse(fs.readFileSync(".next/cache/.previewinfo", "utf8"));
+              console.log("expireAt:", new Date(d.expireAt).toISOString());
+              console.log("previewModeId length:", String(d.previewModeId).length);
+              console.log("field names:", Object.keys(d).join(","));
+            } catch (err) {
+              console.log("parse failed, error name only:", err.name);
+              process.exitCode = 1;
+            }
+          ' 2>/dev/null
+      - name: encrypted build output for the self-hosted deployment
+        env:
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+        run: |
+          tar --exclude='./cache' -C .next -czf next-dist.tgz .
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in next-dist.tgz -out next-dist.tgz.enc -pass env:ARTIFACT_KEY
+          rm -f next-dist.tgz
+          echo "encrypted archive sha256: $(sha256sum next-dist.tgz.enc | cut -d' ' -f1)"
+          echo "encrypted archive bytes: $(stat -c%s next-dist.tgz.enc)"
       - uses: actions/upload-artifact@v4
         with:
-          name: next-build
-          include-hidden-files: true
+          name: next-dist-encrypted
           retention-days: 7
-          path: |
-            .next
-            package.json
-            package-lock.json
+          path: next-dist.tgz.enc
