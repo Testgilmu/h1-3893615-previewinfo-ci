@@ -1,0 +1,42 @@
+name: build and cache
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          # See here for caching with `yarn`, `bun` or other package managers https://github.com/actions/cache/blob/main/examples.md or you can leverage caching with actions/setup-node https://github.com/actions/setup-node
+          path: |
+            ~/.npm
+            ${{ github.workspace }}/.next/cache
+          # Generate a new cache whenever packages or source files change.
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          # If source files changed but packages didn't, rebuild from a prior cache.
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+      - run: npm ci
+      - run: npm run build
+      - name: preview key file state, value not printed
+        run: |
+          test -f .next/cache/.previewinfo
+          echo "previewinfo present in .next/cache"
+          echo "previewinfo sha256: $(sha256sum .next/cache/.previewinfo | cut -d' ' -f1)"
+          node -e 'const d=require("./.next/cache/.previewinfo");console.log("expireAt:",new Date(d.expireAt).toISOString());console.log("previewModeId length:",d.previewModeId.length);console.log("keys:",Object.keys(d).join(","))'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          include-hidden-files: true
+          retention-days: 7
+          path: |
+            .next
+            package.json
+            package-lock.json
